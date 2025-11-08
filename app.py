@@ -2,11 +2,16 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import os
 from sentence_transformers import SentenceTransformer, util
+from document_reader import DocumentAIReader
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+
+PROJECT_ID = os.getenv("PROJECT_ID")
+LOCATION = os.getenv("LOCATION")
+PROCESSOR_ID = os.getenv("PROCESSOR_ID")
 
 # Load the SentenceTransformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -14,12 +19,35 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 # Similarity threshold (default = 0.6)
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", 0.6))
 
+reader = DocumentAIReader(project_id=PROJECT_ID, location=LOCATION, processor_id=PROCESSOR_ID)
+
 
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"message": "Resume Filtering API with Scores ✅"})
 
+@app.route("/process_document", methods=["POST"])
+def process_document():
+    """Accept a GCS URL and return extracted text + summary"""
+    data = request.get_json()
+    gcs_uri = data.get("gcs_uri")
 
+    if not gcs_uri:
+        return jsonify({"error": "Missing 'gcs_uri' in request"}), 400
+
+    try:
+        # Process the document using Document AI
+        doc = reader.process_pdf_from_gcs(gcs_uri, use_raw_document=True)
+        text = reader.extract_text(doc)
+        
+        return jsonify({
+            "status": "success",
+            "gcs_uri": gcs_uri,
+            "summary": text
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+      
 @app.route("/filter_resumes", methods=["POST"])
 def filter_resumes():
     """
