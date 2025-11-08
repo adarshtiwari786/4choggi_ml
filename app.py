@@ -116,5 +116,85 @@ def filter_resumes():
         return jsonify({"error": str(e)}), 500
 
 
+
+@app.route("/match_resume_to_jobs", methods=["POST"])
+def match_jobs():
+    """
+    Match a single resume against multiple job descriptions.
+    
+    Input format:
+    {
+      "resume": {
+        "_id": "r1",
+        "summary": "...",
+        "jobPreference": {"title": "...", "yoe": "..."}
+      },
+      "jobs": [
+        {
+          "JD_id": "j1",
+          "title": "...",
+          "expLevel": "...",
+          "location": "...",
+          "requiredSkills": [...],
+          "jobDescription": "..."
+        },
+        ...
+      ]
+    }
+    
+    Output format:
+    {
+      "ranked_jobs": [
+        {"JD_id": "j2", "similarity_score": 0.87},
+        {"JD_id": "j1", "similarity_score": 0.79}
+      ]
+    }
+    """
+    try:
+        data = request.get_json()
+        resume = data.get("resume", {})
+        jobs = data.get("jobs", [])
+
+        if not resume or not jobs:
+            return jsonify({"error": "Missing 'resume' or 'jobs'"}), 400
+
+        # Build resume text from summary and job preferences
+        summary = resume.get("summary", "").strip()
+        pref = resume.get("jobPreference", {})
+        pref_text = f"{pref.get('title', '')} {pref.get('yoe', '')}"
+        
+        if not summary:
+            return jsonify({"error": "Resume summary is empty"}), 400
+
+        resume_text = f"{summary} {pref_text}"
+        resume_emb = model.encode(resume_text, convert_to_tensor=True)
+
+        ranked = []
+        for job in jobs:
+            jd_id = job.get("JD_id", "")
+            
+            # Build job text from all relevant fields
+            job_text = (
+                f"{job.get('title', '')} {job.get('expLevel', '')} {job.get('location', '')} "
+                f"{' '.join(job.get('requiredSkills', []))} {job.get('jobDescription', '')}"
+            )
+            
+            if not job_text.strip():
+                continue
+
+            job_emb = model.encode(job_text, convert_to_tensor=True)
+            score = float(util.pytorch_cos_sim(resume_emb, job_emb).item())
+
+            ranked.append({"JD_id": jd_id, "similarity_score": round(score, 2)})
+
+        # Keep only above threshold
+        ranked = [r for r in ranked if r["similarity_score"] >= SIMILARITY_THRESHOLD]
+        ranked.sort(key=lambda x: x["similarity_score"], reverse=True)
+
+        return jsonify({"ranked_jobs": ranked})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+      
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
